@@ -5,3 +5,4 @@
 *.P
 _build/
 _bin/
+build/

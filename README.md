@@ -1,93 +1,108 @@
-# TinyUF2 Bootloader
+# ESP32S2/S3 TinyUF2 Bootloader
 
-[![Build Status](https://github.com/adafruit/tinyuf2/workflows/Build/badge.svg)](https://github.com/adafruit/tinyuf2/actions)[![License](https://img.shields.io/badge/license-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
+Source project: https://github.com/adafruit/tinyuf2
 
-This repo is cross-platform UF2 Bootloader projects for MCUs based on [TinyUSB](https://github.com/hathach/tinyusb)
+## Build for ESP Board
+
+1. export your ESP-IDF path (`release/v4.4`)
+2. cd to project
+   ```
+   cd ports/espressif
+   ```
+
+3. build and flash with 
+
+   ```
+   idf.py -DBOARD=espressif_saola_1_wrover build flash
+   ```
+
+>Please change `espressif_saola_1_wrover` to your board
+
+>You can also merge your bin using:
+
+> esptool.py --chip esp32s2 merge_bin --output uf2_bootloder.bin 0x1000 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0xe000 build/ota_data_initial.bin 0x2d0000 build/tinyuf2.bin
+
+>Then write from `0x0`:
+
+> esptool.py --chip esp32s2 write_flash --flash_mode dio 0x0 uf2_bootloder.bin
+
+> ESP32S2 have different address with ESP32S3, please check the address infomation after build
+
+
+## Convert Binary to UF2
+
+To create your own UF2 file, simply use the [Python conversion script](https://github.com/Microsoft/uf2/blob/master/utils/uf2conv.py) on a .bin file, specifying the family id as `ESP32S2`, ``ESP32S3` or their magic number as follows. Note you must specify application address of 0x00 with the -b switch, the bootloader will use it as offset to write to ota partition.
+
+1. add convert script to path
+   ```
+   export PATH=$PATH:./utils
+   ```
+2. convert as follow
+
+    ```
+    uf2conv.py firmware.bin -c -b 0x00 -f ESP32S2
+    uf2conv.py firmware.bin -c -b 0x00 -f 0xbfdd4eee
+
+    uf2conv.py firmware.bin -c -b 0x00 -f ESP32S3
+    uf2conv.py firmware.bin -c -b 0x00 -f 0xc47e5767
+    ```
+
+## Usage
+
+There are a few ways to enter UF2 mode:
+
+- There is no `ota application` and/or `ota_data` partition is corrupted
+- `PIN_BUTTON_UF2` is gnd when 2nd stage bootloader indicator is on e.g **RGB led = Purple**. Note: since most ESP32S2 board implement `GPIO0` as button for 1st stage ROM bootloader, it can be used for dual-purpose button here as well. The difference is the pressing order:
+  - Holding `GPIO0` then reset -> ROM bootloader
+  - Press reset, see indicator on (purple RGB) then press `GPIO0` -> UF2 bootloader
+- `PIN_DOUBLE_RESET_RC` GPIO is attached to an 100K resistor and 1uF Capacitor to serve as 1-bit memory, which hold the pin value long enough for double reset detection. Simply press double reset to enter UF2
+- Request by application using [system reset reason](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/system.html?highlight=esp_reset_reason#reset-reason) with hint of `0x11F2`. Reset reason hint is different than hardware reset source, it is written to RTC's store6 register and hold value through a software reset. Since Espressif only uses an dozen of value in `esp_reset_reason_t`, it is safe to hijack and use *0x11F2* as reset reason to enter UF2 using following snippet.
+  ```
+  #include "esp_private/system_internal.h"
+  void reboot_to_uf2(void)
+  {
+    // Check out esp_reset_reason_t for other Espressif pre-defined values
+    enum { APP_REQUEST_UF2_RESET_HINT = 0x11F2 };
+
+    // call esp_reset_reason() is required for idf.py to properly links esp_reset_reason_set_hint()
+    (void) esp_reset_reason();
+    esp_reset_reason_set_hint(APP_REQUEST_UF2_RESET_HINT);
+    esp_restart();
+  }
+  ```
+
+## 2nd Stage Bootloader
+
+After 1st stage ROM bootloader runs, which mostly checks GPIO0 to determine whether it should go into ROM DFU, 2nd stage bootloader is loaded. It is responsible for determining and loading either UF2 or user application (OTA0, OTA1). This is the place where we added detection code for entering UF2 mode mentioned by above methods.
+
+Unfortunately ESP32S2 doesn't have a dedicated reset pin, but rather using [power pin (CHIP_PU) as way to reset](https://github.com/espressif/esp-idf/issues/494#issuecomment-291921540). This makes it impossible to use any RAM (internal and PSRAM) to store the temporary double reset magic. However, using an resistor and capacitor attached to a GPIO, we can implement a 1-bit memory to hold pin value long enough for double reset detection.
+
+**TODO** guide and schematic as well as note for resistor + capacitor.
+
+## UF2 Application as 3rd stage Bootloader
+
+UF2 is actually a **factory application** which is pre-flashed on the board along with 2nd bootloader and partition table. When there is no user application or 2nd bootloader "double reset alternative" decide to load uf2. Therefore it is technically 3rd stage bootloader.
+
+It will show up as mass storage device and accept uf2 file to write to user application partition. UF2 bootloader will always write/update firmware to **ota_0** partition, since the actual address is dictated by **partitions.csv**, uf2 file base address **MUST** be 0x00, the uf2 will parse the partition table and start writing from address of ota_0. It also makes sure there is no out of partition writing.
+
+After complete writing, uf2 will set the ota0 as bootable and reset, and the application should be running in the next boot.
+
+NOTE: uf2 bootloader, customized 2nd bootloader and partition table can be overwritten by ROM DFU and/or UART uploading. Especially the `idf.py flash` which will upload everything from the user application project. It is advisable to upload only user application only with `idf.py app-flash` and leave other intact provided the user partition table matched this uf2 partition.
+
+## Partition
+
+Following is typical partition for 4MB flash, check out the `partition-xMB.csv` for details.
 
 ```
-.
-├── apps              # Useful applications such as self-update, erase firmware
-├── lib               # Sources from 3rd party such as tinyusb, mcu drivers ...
-├── ports             # Port/family specific sources
-│   ├── espressif
-│   │   └── boards/   # Board specific sources
-│   │   └── Makefile  # Makefile for this port
-│   └── mimxrt10xx         
-├── src               # Cross-platform bootloader sources files
+# Name,   Type, SubType, Offset,  Size, Flags
+# bootloader.bin,,          0x1000, 32K
+# partition table,          0x8000, 4K
+
+nvs,      data, nvs,      0x9000,  20K,
+otadata,  data, ota,      0xe000,  8K,
+ota_0,    0,    ota_0,   0x10000,  1408K,
+ota_1,    0,    ota_1,  0x170000,  1408K,
+uf2,      app,  factory,0x2d0000,  256K,
+ffat,     data, fat,    0x310000,  960K,
 ```
 
-## Features
-
-TODO more docs later
-
-- Support ESP32-S2, ESP32-S3, iMXRT10xx, LPC55xx, STM32F3, STM32F4
-- Self update with update file in uf2 format
-- Indicator: LED, RGB
-- Debug log with uart/swd
-- Double tap to enter DFU, reboot to DFU and quick reboot from application
-
-## Build and Flash
-
-Following is generic compiling information. Each port may require extra set-up and slight different process e.g esp32s2 require setup IDF.
-
-### Compile
-
-To build this for a specific board, we need to change current directory to its port folder
-
-```
-$ cd ports/stm32f4
-```
-
-Then compile with `make BOARD=[board_name] all`, for example
-
-```
-make BOARD=feather_stm32f405_express all
-```
-
-The required mcu driver submodule if any will be clone automatically if needed. 
-
-### Flash
-
-`flash` target will use the default on-board debugger (jlink/cmsisdap/stlink/dfu) to flash the binary, please install those support software in advance. Some board use bootloader/DFU via serial which is required to pass to make command
-
-```
-$ make BOARD=feather_stm32f405_express flash
-```
-
-If you use an external debugger, there is `flash-jlink`, `flash-stlink`, `flash-pyocd` which are mostly like to work out of the box for most of the supported board.
-
-### Debug
-
-To compile for debugging add `DEBUG=1`, this will mostly change the compiler optimization
-
-```
-$ make BOARD=feather_stm32f405_express DEBUG=1 all
-```
-
-#### Log
-
-Should you have an issue running example and/or submitting an bug report. You could enable TinyUSB built-in debug logging with optional `LOG=`. 
-- **LOG=1** will print message from bootloader and error if any from TinyUSB stack.
-- **LOG=2** and **LOG=3** will print more information with TinyUSB stack events
-
-```
-$ make BOARD=feather_stm32f405_express LOG=1 all
-```
-
-#### Logger
-
-By default log message is printed via on-board UART which is slow and take lots of CPU time comparing to USB speed. If your board support on-board/external debugger, it would be more efficient to use it for logging. There are 2 protocols: 
-
-- `LOGGER=rtt`: use [Segger RTT protocol](https://www.segger.com/products/debug-probes/j-link/technology/about-real-time-transfer/)
-  - Cons: requires jlink as the debugger.
-  - Pros: work with most if not all MCUs
-  - Software viewer is JLink RTT Viewer/Client/Logger which is bundled with JLink driver package.
-- `LOGGER=swo`: Use dedicated SWO pin of ARM Cortex SWD debug header.
-  - Cons: only work with ARM Cortex MCUs minus M0
-  - Pros: should be compatible with more debugger that support SWO.
-  - Software viewer should be provided along with your debugger driver.
-
-```
-$ make BOARD=feather_stm32f405_express LOG=2 LOGGER=rtt all
-$ make BOARD=feather_stm32f405_express LOG=2 LOGGER=swo all
-```

@@ -33,7 +33,7 @@ execute_process(COMMAND git describe --dirty --always --tags
                 ERROR_QUIET)
 string(STRIP ${GIT_VERSION} GIT_VERSION)
 
-execute_process(COMMAND bash "-c" "git submodule status ${TOP}/lib/esp-idf ${TOP}/lib/tinyusb | cut -d\" \" -f3,4 | paste -s -d\" \" -"
+execute_process(COMMAND bash "-c" "git submodule status $ENV{IDF_PATH} $ENV{IDF_PATH}/components/tinyusb/tinyusb | cut -d\" \" -f3,4 | paste -s -d\" \" -"
                 OUTPUT_VARIABLE GIT_SUBMODULE_VERSIONS
                 ERROR_QUIET)
 string(REPLACE ../../../../lib/ "" GIT_SUBMODULE_VERSIONS ${GIT_SUBMODULE_VERSIONS})

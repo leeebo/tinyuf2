@@ -8,6 +8,6 @@ idf_component_get_property( FREERTOS_ORIG_INCLUDE_PATH freertos ORIG_INCLUDE_PAT
 target_include_directories(${COMPONENT_TARGET} PUBLIC
   "${FREERTOS_ORIG_INCLUDE_PATH}"
   "${TOP}/src"
-  "${TOP}/lib/tinyusb/src"
-  "${TOP}/ports/espressif"
+  "$ENV{IDF_PATH}/components/tinyusb/tinyusb/src"
+  "$ENV{IDF_PATH}"
 )
