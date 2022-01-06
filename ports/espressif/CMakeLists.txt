@@ -33,13 +33,25 @@ execute_process(COMMAND git describe --dirty --always --tags
                 ERROR_QUIET)
 string(STRIP ${GIT_VERSION} GIT_VERSION)
 
-execute_process(COMMAND bash "-c" "git submodule status $ENV{IDF_PATH} $ENV{IDF_PATH}/components/tinyusb/tinyusb | cut -d\" \" -f3,4 | paste -s -d\" \" -"
-                OUTPUT_VARIABLE GIT_SUBMODULE_VERSIONS
+execute_process(COMMAND git -C ${IDF_PATH} describe --dirty --always --tags
+                OUTPUT_VARIABLE IDF_VERSION
                 ERROR_QUIET)
-string(REPLACE ../../../../lib/ "" GIT_SUBMODULE_VERSIONS ${GIT_SUBMODULE_VERSIONS})
-string(STRIP ${GIT_SUBMODULE_VERSIONS} GIT_SUBMODULE_VERSIONS)
+string(STRIP ${IDF_VERSION} IDF_VERSION)
 
-add_compile_definitions(UF2_VERSION_BASE="${GIT_VERSION}")
-add_compile_definitions(UF2_VERSION="${GIT_VERSION} - ${GIT_SUBMODULE_VERSIONS}")
+execute_process(COMMAND git -C ${IDF_PATH}/components/tinyusb/tinyusb describe --dirty --always --tags
+                OUTPUT_VARIABLE TINYUSB_VERSION
+                ERROR_QUIET)
+string(STRIP ${TINYUSB_VERSION} TINYUSB_VERSION)
+
+set(GIT_SUBMODULE_VERSIONS "IDF:${IDF_VERSION} - TinyUSB:${TINYUSB_VERSION}")
+
+if(${CMAKE_VERSION} VERSION_LESS "3.12") 
+    message("Please consider to switch to CMake above 3.12")
+    add_definitions(-DUF2_VERSION_BASE="${GIT_VERSION}")
+    add_definitions(-DUF2_VERSION="${GIT_VERSION} - ${GIT_SUBMODULE_VERSIONS}")
+else()
+    add_compile_definitions(UF2_VERSION_BASE="${GIT_VERSION}")
+    add_compile_definitions(UF2_VERSION="${GIT_VERSION} - ${GIT_SUBMODULE_VERSIONS}")
+endif()
 
 project(tinyuf2)
